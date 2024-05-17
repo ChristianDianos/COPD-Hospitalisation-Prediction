@@ -1,0 +1,1311 @@
+# Exploratory Data Analysis
+
+# Want to predict 6 month readmission
+```{r}
+library(dplyr)
+
+preprocessed_data <- read.csv("preprocessed_data_long.csv")
+
+
+
+```
+Considering how proprocessed data has the outcome variable hosp_next_time, I will focus on analysing the predictor variables within this data set first and then add predictors from other data sets
+
+
+```{r}
+#preprocessed_data %>% summary()
+#Commented to be able to shorten EDA length
+```
+There are a lot of variables. An important consideration will be how there are multiple types of hospitalisation variables representing the different duration of hospitalisation. We will only be focussing on 1 month, 3 month and 6 month.
+
+In order to focus on the most relevant, we will pick the 15 with the least amount of NaN values
+
+But before we do that, need to create the outcome variable - boolean hosp_6_months
+It seems that the hosp_next_time variable is the difference in time in months between visits. 
+
+Therefore need to find patients with time less than 6 months
+
+```{r}
+preprocessed_data <- preprocessed_data %>% 
+  mutate(hosp_6_month = if_else(hosp_next_time<6, "True", "False", "False")) %>% 
+  mutate(hosp_6_month = as.factor(hosp_6_month))
+
+
+og_preprocessed_data<- preprocessed_data
+
+
+head(preprocessed_data)
+
+```
+
+
+#Least NaN values
+Ok, Back to finding the 15 predictors with the least amount of NaN values
+
+```{r}
+na_count <-sapply(preprocessed_data, function(y) sum(length(which(is.na(y)))))
+na_count <- data.frame(na_count)
+na_count
+
+na_count_vector <- na_count[order(na_count$na_count),]
+na_count_vector
+
+```
+There are several variables that have 0 NaN values
+Some of them are variables like X, RandID, we won't focus on those.
+
+What we will focus on first though is diagnosis date.
+
+This is something that is a character variable, and we need to extract the duration of COPD 
+
+Looking at the data there exists two variables -  date and diagnosis date. I do believe that having a variable that shows the date since diagnosis would be a good estimate of duration of diagnosis - and this exists which is time_diff. Will come to this later.
+
+#has_ct
+
+This is a boolean variable, therefore need to represent it as a factor
+
+```{r}
+preprocessed_data$has_ct <- as.factor(preprocessed_data$has_ct)
+
+
+```
+
+Lets see if it is statistically significant in the prediction of 6 month readmission
+
+Considerations: we are testing two factors/two categorical variables. Therefore we can use a chi-square test to see if there is a statistically significant relationship
+
+Assumes that each occurence contributes to one cell - Lets form a table to see if that would be correct 
+
+```{r}
+table(preprocessed_data$has_ct,preprocessed_data$hosp_6_month)
+chisq.test(preprocessed_data$has_ct, preprocessed_data$hosp_6_month, correct = FALSE)
+```
+Reasonable to assume assumptions are met - total adds to  22096 which is number of cases
+Considering how p-val is significantly below 0.05, this suggests that there is a decent relationship
+
+#has_hosp
+
+has_hosp is another categorical variable, therefore chi-square test
+
+```{r}
+preprocessed_data %>% 
+  mutate(has_hosp = as.factor(has_hosp)) 
+
+
+table(preprocessed_data$hosp_6_month,preprocessed_data$has_hosp) %>%
+  chisq.test(correct = FALSE)
+``` 
+
+So has_hosp is a worthy variable - p-val is less than 0.05
+
+
+#pr_complete_ever
+Another boolean - chi-square test
+```{r}
+preprocessed_data %>% 
+  mutate(pr_complete_ever =  as.factor(pr_complete_ever))
+
+table(preprocessed_data$pr_complete_ever,preprocessed_data$hosp_6_month)
+
+table(preprocessed_data$pr_complete_ever,preprocessed_data$hosp_6_month) %>%
+  chisq.test(correct=FALSE)
+```
+Interesting, this shows that pr_complete_ever is a statistically insignificant variable 
+*I wonder if this means that the different pr time (pr_5_years, etc.) are not important*
+Going to assume yes, so all pr variables will be ignored
+- An interesting idea might be how a fishers test could be run instead, but there is a pretty huge dataset so maybe not a good idea
+
+#home_oxygen_ever
+Another boolean - chi square test
+```{r}
+preprocessed_data %>%
+  mutate(home_oxygen_ever = as.factor(home_oxygen_ever))
+
+table(preprocessed_data$home_oxygen_ever, preprocessed_data$hosp_6_month) %>%
+  chisq.test(correct = FALSE)
+```
+
+p-val is small, therefore a statistically significant variable
+This means that the home_oxygen variables are important consideration and the home_oxygen_0_year, etc. should be factored and examined
+
+#sex - categorical - chisquare
+
+```{r}
+preprocessed_data %>%
+  mutate(sex = as.factor(sex))
+
+table(preprocessed_data$hosp_6_month, preprocessed_data$sex) %>%
+  chisq.test(correct = FALSE)
+```
+p-val is not extremely small, I wonder whether male or female has a greater effect. Let's do a lm to figure out
+
+```{r}
+model <- glm(data=preprocessed_data, formula = hosp_6_month~sex, family = binomial())
+summary(model)
+
+```
+Seems like being male reduces the chance of being hospitalised in 6 months
+#Race -  multiple categorical variables
+
+```{r}
+preprocessed_data %>% 
+  mutate(race = as.factor(race))
+
+model <- glm(data=preprocessed_data, formula = hosp_6_month~race, family = binomial())
+summary(model)
+```
+
+Overall, race does not seem to be highly predictive in 6 month hospitalisation. While hispanic race seems to show a statistically significant relationship, I have a feeling this could be due to number of hispanic individuals in the data set -  let's investigate
+
+```{r}
+preprocessed_data$race <- as.factor(preprocessed_data$race)
+levels(preprocessed_data$race)
+
+table(preprocessed_data$race)
+```
+Overall, the majority of the data set is caucasian, with 10 being hispanic. Therefore, race is not a worthy predictor 
+
+
+#smoking_status -  multiple categorical levels - Fisher Exact Test
+
+```{r}
+preprocessed_data %>% 
+  mutate(smoking_status = as.factor(smoking_status)) 
+model <- glm(data=preprocessed_data, formula = hosp_6_month~smoking_status, family = binomial())
+summary(model)
+```
+
+Smoking status is a good predictor it will be kept.
+
+#mort_age
+considering how you can't have the age that someone would die in the future, this is an irrelevant variable
+potentially, you could find that individuals over a certain age would be less likely to be readmitted but that could just be found out through age
+
+#visit_number
+This is a numerical variable, but can factor it, but maybe not as it can theoretically continue forever and is therefore continuous
+
+Let's analyse the distribution of the visit_numbers
+```{r}
+library(ggplot2)
+
+ggplot(preprocessed_data, aes(x=visit_number)) +
+  geom_histogram(binwidth=0.5)
+
+
+
+
+typeof(preprocessed_data$visit_number)
+preprocessed_data$visit_number <- as.numeric(preprocessed_data$visit_number)
+
+model <- glm(data = preprocessed_data, formula = hosp_6_month~visit_number, family=binomial())
+summary(model)
+```
+Visit number is statistically significant, but it is highly skewed
+
+Need to analyse the cases that have more than 9 visits
+
+```{r}
+preprocessed_data %>%
+  filter(visit_number>9)
+```
+All have a old diagnosis date - the time_diff also seems to be pretty high, I wonder if there is colinearity between the two
+
+```{r}
+library(olsrr)
+model1 <- lm(visit_number ~ time_diff , data = preprocessed_data)
+plot(preprocessed_data$time_diff, preprocessed_data$visit_number)
+summary(model1)
+```
+
+Because there are not so many cases where the visit numbers are high, it is hard to see if there is colinearity. However, for the few cases where visit numbers are high, so is time diff -  It follows a linear trend. 
+
+Because of how there is some kind of colinearity, and this makes sense (greater time since diagnosis would mean more visits over time), only time_diff or visit number should be included in the model.
+
+But, the R2 is only .52 and does not show a great deal of correlation between the two. At least the colinearity makes sense in theory?
+
+#time_diff
+
+Because of how time_diff is more dynamically continuous (not just 1 2 3 4), it is probably a good idea to be able to see how time_diff works
+
+```{r}
+preprocessed_data %>%
+  mutate(time_diff = as.numeric(time_diff))
+
+ggplot(data = preprocessed_data, aes(x = time_diff, y = hosp_6_month))+geom_violin()
+```
+
+Overall, there is a lot of variance in time_diff. I would look to analyse these to see what causes these cases to be so long, but would not see that it be likely that these be removed.
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & time_diff >60)
+```
+An interesting thing is how there seem to be few current smokers, mainly ex and never, I wonder if this is something consistent throughout the entire data set.
+
+```{r}
+preprocessed_data %>% count(smoking_status == "current")
+```
+So clearly, not the majority, and probably a similar proportion in the above filter?
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & time_diff >60) %>%
+  count(smoking_status == "current")
+```
+
+Proportion of smokers in the entire study = 0.2429
+Proportion of smokers in the false and time diff >60 group = 0.21844
+
+So roughly similar, nothing too outstanding. Therefore smoking status would not be a decent reason for a shorter time_diff (possibly due to earlier mortality)
+
+Let's hypothesis test
+```{r}
+model <- glm(data = preprocessed_data, formula = hosp_6_month~time_diff, family=binomial())
+plot(model)
+#Not normal
+m1 <- wilcox.test(data = preprocessed_data,  time_diff~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+
+
+```
+Therefore -  time_diff is statistically significant
+But, the difference is only 3 months, this makes me think that we need to see how the variable performs in the entire model and what the estimated effect is.
+
+#age
+
+is continuous, and also in months therefore glm
+
+However, as someone is older, their amount of visits in the hospital would be expected to increase - therefore it was a good idea to exclude the variable visit_number
+
+Let's look at the distribution of age
+
+```{r}
+library(ggplot2)
+ggplot(data=preprocessed_data, aes(x=age, y=factor(hosp_6_month))) + 
+  geom_violin()
+```
+There are a lot of outliers in the false group, let's examine them to be able to see if there is anything of note in there.
+
+#Filter based on predictors only
+
+
+```{r}
+#Want to write code that can allow me to access the people from the false group with an age less than 450 months
+
+
+
+preprocessed_data %>% filter(hosp_6_month == "False" & age < 460)
+
+```
+Nothing seems to stick out as being a common factor in these people, they are outliers are therefore can be excluded without affecting the model. Additionally, there are only 403 of them
+
+
+
+
+```{r}
+# sample <- preprocessed_data[!(preprocessed_data$hosp_6_month == "False" & preprocessed_data$age < 460),]
+# 
+# preprocessed_data <- sample
+```
+Okay, there are now some outliers for the true group as well, let's examine these
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "True" & age < 490)
+```
+Considering how there is only 7, and there are no similarities between them, I'll remove them
+
+```{r}
+# sample <- preprocessed_data
+# 
+# sample <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$age<490),]
+# 
+# sample %>%
+#   filter(hosp_6_month == "True" & age < 490)
+# 
+# plot(sample$hosp_6_month,sample$age)
+# 
+# preprocessed_data <- sample
+
+```
+
+
+There is a slightly bigger increase in age in the Positive hosp_6_month group in age
+
+Is this statistically significant? - student's t-test
+
+Assumptions
+Normality
+Linearity
+Homoscedasticity
+
+```{r}
+model <- glm(data = preprocessed_data, hosp_6_month~age, family = binomial())
+
+par(mfrow=c(1,2))
+plot(model)
+par(mfrow=c(1,1))
+
+```
+
+Clearly does not meet assumptions
+
+Therefore, use Mann Whitney U test
+
+
+
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  age~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+
+```
+So the difference is statistically significant
+
+Regarding linearity, need to ensure that the relationship between age and hosp_6_months is linear 
+
+```{r}
+library(tidyr)
+
+mydata <- preprocessed_data %>% 
+  select(age, height, hosp_6_month) %>%
+  filter(!is.na(height) & !is.na(age))
+
+model <- glm(data = mydata, formula = hosp_6_month~age+height, family = binomial())
+probabilities <- predict(model, type = "response")
+
+sum(is.na(preprocessed_data$height))
+length(probabilities)
+nrow(preprocessed_data)
+
+predictors <- c("age", "height")
+
+print(predictors)
+
+mydata <- preprocessed_data %>%
+  select(age) %>%
+  mutate(logit = log(probabilities/(1-probabilities))) %>%
+  gather(key="predictors", value="predictor.values", -logit)
+head(mydata)
+
+
+mydata <- as.data.frame(cbind(logit, probabilities))
+# logit <- as.data.frame(logit=logit, probabilities=probabilities)
+# 
+# head(logit)
+# print(length(probabilities))
+# print(nrow(logit))
+# mydata <- mutate(logit) %>%
+#   gather(key = "predictors", value = "predictor.value", -logit)
+
+head(mydata)
+
+ggplot(mydata, aes(logit, predictor.values))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  theme_bw() 
+
+```
+
+```{r}
+ggplot(mydata, aes(logit, predictor.values))+
+  geom_point(size = 0.5, alpha = 0.5)
+
+```
+
+
+#height
+
+As is continuous, student t-test
+
+Let's see how data is modelled
+
+```{r}
+plot(preprocessed_data$hosp_6_month,preprocessed_data$height)
+```
+Nothing in particular, not a huge amount of outliers let's check assumptions
+
+```{r}
+model <- glm(data = preprocessed_data, hosp_6_month~height, family = binomial())
+
+par(mfrow=c(1,2))
+plot(model)
+par(mfrow=c(1,1))
+```
+
+Does not meet assumptions, therefore, let's do Mann-Whitney U test
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  height~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+```
+So height is statistically significant, strange -  it does not seem like height could influence risk for COPD re-admission
+Googling it, it was found that height decreases the risk of COPD -  maybe reduces effects?
+
+
+#weight
+As is continuous, student t-test
+
+Let's see how data is modelled
+
+```{r}
+ggplot(data=preprocessed_data, aes(x=weight, y=factor(hosp_6_month))) + 
+  geom_violin()
+```
+There are a few ouliers for both groups
+
+```{r}
+count(preprocessed_data)
+
+preprocessed_data %>% 
+  filter(hosp_6_month == "False" & weight >= 130)
+
+preprocessed_data %>% 
+  filter(hosp_6_month == "False" & weight < 130)
+
+preprocessed_data %>% 
+  filter(hosp_6_month == "True")
+```
+Nothing seems to be too common in this group, plus there are only 210 cases, let's remove them
+
+```{r}
+
+# sample <- preprocessed_data[!(preprocessed_data$hosp_6_month == "False" & preprocessed_data$weight >= 130),]
+
+
+
+
+
+
+# sample %>% 
+#   filter(hosp_6_month == "False" & weight >= 130)
+```
+
+Let's look at those in the hosp_6_month = true group
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month == "True" & weight >= 128)
+```
+Nothing seems to be too similar amongst them, let's remove them
+
+```{r}
+# sample <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$weight >= 128),]
+# sample %>% 
+#   filter(hosp_6_month == "True" & weight >= 128)
+# 
+# preprocessed_data <- sample
+
+
+
+```
+
+
+
+Nothing in particular, let's check assumptions
+
+```{r}
+model <- glm(data = preprocessed_data, hosp_6_month~weight, family = binomial())
+
+par(mfrow=c(1,2))
+plot(model)
+par(mfrow=c(1,1))
+```
+
+Does not meet assumptions, therefore, let's do Mann-Whitney U test
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  weight~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+```
+Statistically significant
+
+This makes somewhat more sense, individuals with higher weight tend to have poorer health outcomes
+
+#substance
+There are a lot of levels here, need to think of a way to be able to categorise these better, like focussing on ventolin or something
+
+But, wouldn't this be a confounder for the condition the individual was in? - No, substance refers to the type of treatment that they were experiencing
+
+```{r}
+preprocessed_data$substance %>%
+  as.factor() %>%
+  summary()
+```
+It's clear that there are a ot of similarities here. I need to clean this into the different types 
+Salbutamol and ventolin and b-agonist short are the same
+
+#dlco
+Will ignore, great amount of NaN values 
+
+
+
+
+
+#test model 1
+
+Have a decent number of variables, let's see if we can predict 6_month_hospitalisation
+```{r}
+
+model <- glm(data = preprocessed_data, formula = hosp_6_month~has_ct+ has_hosp+home_oxygen_ever+sex+smoking_status+time_diff+age+height+weight, family=binomial())
+
+summary(model)
+
+
+model1 <- step(model, direction="backward", trace=0)
+summary(model1)
+
+```
+
+
+
+
+#fev1
+```{r}
+head(preprocessed_data$fev1)
+```
+Despite only 5 data points, seems spread a lot -  let's look at a violin plot
+
+```{r}
+
+ggplot(data=preprocessed_data, aes(x=fev1, y=factor(hosp_6_month))) + 
+  geom_violin()
+
+
+```
+On first inspection, it seems that there is definitely a relationship between fev1 and being hospitalised later - and likely statistically significant one
+
+The skew in the false group should be investigated, people who have such a high fev1 are surely not getting hospitalised for copd, potentially just being tested for it?
+
+```{r}
+preprocessed_data %>%
+  filter(fev1 >3.8)
+```
+So in this group we have:
+- people ENTIRELY not in the rehospitalised range (therefore having a fev1 above 3.8 means low low chance)
+- low mortality within a 5 year period (for those who did die - we can assume it is due to other causes)
+- All except one have had home oxygen (makes sense, if you had a decent fev1 you would not need hom oxygen)
+- varied smoking status
+Therefore is worthy information and should not be removed
+
+fev1 seems so far like an extremely good predictor - won't check assumptions but will do Mann-Whitney U test
+
+```{r}
+wilcox.test(data = preprocessed_data, fev1~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+```
+so statistically significant - good
+
+#fvc
+```{r}
+ggplot(data = preprocessed_data, aes(x = fvc, y = hosp_6_month))+geom_violin()
+
+
+```
+Similar distribution as to what was present before, wonder if the ratio fev1/fvc would be a good idea to include in the model instead of these. Again, having a high fvc means that you are pretty guaranteed to not be re-admitted.
+
+
+An interesting case is the fvc > 5 in the true group, I wonder if getting rid of those would have any harm on the data?
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "True", fvc >5)
+
+sum(preprocessed_data$home_oxygen_ever == "True")
+```
+
+hmm is this clinically interesting, or distorting the data? 
+I'd have to say that it is distorting the data, the only similarity includes the pr_complete_ever being unanimously false, but that is a stat. insignificant variable.
+
+actually, good idea to see if this would be distorting the data in the fev1/fvc variable first before removing it
+
+#fev1/fvc
+
+Violin plot to see how the distribution between the two groups differs
+
+```{r}
+library(ggplot2)
+ggplot(data = preprocessed_data, aes(x = fev1_fvc, y=hosp_6_month))+geom_violin()
+```
+OK, clearly there are more people who do not get readmitted who have a higher fev1_fvc
+
+There are definitely outliers surrounding the:
+- >0.815 in false
+- <0.125 in false (this is really low, not even present in the True group - potentially due to how people below .125 in true have been removed in some way)
+- >0.875 in true
+
+Another thing that is interesting is there is two bulges near 0.375  and .625 in the True group. I would be curious to examine the .625 people to see what makes this bulge appear
+
+Let's examine >0.815 in false
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & fev1_fvc >0.81)
+```
+Nothing noticed as being similar here, so this group can be removed.
+
+```{r}
+# preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "False" & preprocessed_data$fev1_fvc >.81),]
+```
+
+Let's examine <0.125 in false
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & fev1_fvc <0.125)
+```
+
+Interesting, this is probably a coincidence but they all have the same mort age of 835, while mort age won't be a predictor, still interesting. They also have similar age, height, weight, home oxygen 0,1,3,5 year. It is only 3 rows. Therefore, should keep. 
+
+
+Let's examine >0.875 in true
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "True" & fev1_fvc >.825)
+```
+Nothing seems too similar in this, therefore can be removed.
+Even looking through it a second time, I am hesitant to remove it now, but there is seriously nothing here that I can see that would make the fact that despite a high fev1_fvc, they would be readmitted
+
+```{r}
+# preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$fev1_fvc >0.825),]
+```
+
+
+Let's look at the distribution
+
+```{r}
+library(ggplot2)
+ggplot(data = preprocessed_data, aes(x = fev1_fvc, y=hosp_6_month))+geom_violin()
+```
+
+Still, a bit of outlier present in the false group, but these cases were pretty similar.
+
+```{r}
+wilcox.test(data = preprocessed_data, fev1_fvc~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+```
+
+
+
+#fivc
+
+Despite there being over 8000 Nan values, this is still potentially an informative variable
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = fivc, y=hosp_6_month))+geom_violin()
+
+```
+
+
+There are outliers present, and there is a lower fivc for those who become readmitted in 6 months
+
+
+Let's examine fivc > 5 for the True group
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month ==  "True" & fivc > 5)
+``` 
+
+Pretty varied despite 4 being present, will remove
+UPDATE: Now being hesitant to remove things, I cannot see anything in this subset that would render it likely that hospitalization could have been predicted. There aren't even similarities in age groups.
+UPDATE: I wonder if these are the same people that had a really high fev1_fvc>.825?
+
+UPDATE: Actually, there is a possible similarity in age group and substance together. Would like to look at the distribution of substance in the sample.
+
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month ==  "True" & fivc > 5 & fev1_fvc>0.825)
+```
+No luck.
+
+```{r}
+# preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month ==  "True" & preprocessed_data$fivc > 5),]
+```
+
+
+Let's examine fivc > 6 for the False group
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month =="False" & fivc > 6)
+```
+
+Nothing similar, remove
+
+```{r}
+# preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month ==  "False" & preprocessed_data$fivc > 6),]
+
+```
+
+Regarding <0.7 in the False group
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month =="False" & fivc < 0.7)
+```
+Nothing really similar, removed
+
+```{r}
+# preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month ==  "False" & preprocessed_data$fivc <0.7),]
+
+```
+
+
+Now let's do a statistical test to see if there's a stat significant relationship
+
+```{r}
+model <- glm(data = preprocessed_data, formula = hosp_6_month~fivc, family=binomial())
+plot(model)
+
+```
+
+Not normal, therefore wilcoxon test
+
+```{r}
+wilcox.test(data = preprocessed_data, fivc~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+```
+
+
+Statistical significant
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+wilcoxon test
+```{r}
+wilcox.test(data = preprocessed_data, fvc~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+
+```
+So, good to include
+
+
+#pef
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = pef, y=hosp_6_month))+geom_violin()
+
+```
+Want to analyse
+
+- in true, pef > 10
+- in false, pef >12
+- in false, pef <1.2
+
+
+in true, pef > 10
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "True" & pef>10)
+```
+Not only are there very few similarities, but having such a high pef value and geting readmitted is very rare, so comfortable to remove.
+
+```{r}
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$pef>10),]
+```
+
+
+- in false, pef >12
+Before looking at the results, it is probably a decent idea to keep these as they are pretty logical indicators of good lungs and less readmission
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & pef>12.5)
+```
+Considering the above, how there is also low mortality in this group, will leave it as it could be a good predictor despite being rare.
+
+- in false, pef <1.2
+Now this is more of a anomaly, therefore, probably a good idea to get rid of, let's examine
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & pef<1.2)
+```
+Nothing really similar, so removed
+
+```{r}
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "False" & preprocessed_data$pef<1.2),]
+```
+```{r}
+wilcox.test(data = preprocessed_data, pef~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+
+
+```
+
+
+#mmef
+```{r}
+ggplot(data = preprocessed_data, aes(x = mmef, y=factor(hosp_6_month)))+geom_violin()
+
+```
+
+Let's examine
+True > 2
+False > 3.25
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "True" & mmef > 2)
+
+```
+
+Nothing similar, so remove
+
+```{r}
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$mmef > 2),]
+```
+
+False > 2.8
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & mmef > 3.5)
+
+```
+Nothing similar so remove. Even though high mmef is a predictor of no readmission, these probably are too extreme of cases
+
+```{r}
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "False" & preprocessed_data$mmef > 3.5),]
+```
+
+
+Now, is this statistically significant?
+
+
+
+```{r}
+model <- glm(data = preprocessed_data, formula = hosp_6_month~mmef, family=binomial())
+plot(model)
+
+```
+
+Not normal, therefore wilcoxon test
+
+```{r}
+wilcox.test(data = preprocessed_data, mmef~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+```
+
+Statistically significant
+
+#vt
+
+Even  though there are about 8000 NaN values, should still investigate
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = vt, y=factor(hosp_6_month)))+geom_violin()
+
+```
+Plots look really identical, will quickly remove outliers and then do a quick statistical test to see if the outliers should even be investigated.
+
+```{r}
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$vt > 2),]
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "False" & preprocessed_data$vt > 2.8),]
+wilcox.test(data = preprocessed_data, vt~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+
+```
+So, statistically, significant, but with a very small difference in location, I wonder what the p-value of this would look like in the grand scheme of things with the entire model? It seems like vt is slightly greater in the hospitalised group, still, would have to investigate how it would impact in the model - I foresee a high chance of this being removed.
+
+#fev1_fev6
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = fev1_fev6, y=factor(hosp_6_month)))+geom_violin()
+
+```
+Before examining anything, there is an interesting case for two peaks in the true group aorund 0.45 and 0.67, I wonder why there is a decrease between those two points?
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month == "True" & 0.45<fev1_fev6 & fev1_fev6<0.67)
+```
+Nothing in particular. This could suggest that fev1_fev6 is only a decent predictor in some groups of people, but because it is a pretty stable clinical indicator of COPD, I don't see how it could be seen to be relevant to only some types of people
+
+In the false group:
+- having close to 1 fev1_fev6 likely would indicate a false reading. There is very little chance that someone would be able to expire the same volume in 1 second as in 6 seconds. This would probably be an overblow (but it is FORCED expiratory volume)? I wonder if these are all people's first time?
+
+```{r}
+preprocessed_data %>% 
+  filter(fev1_fev6 >0.9)
+```
+visit numbers range from 0-6, yes there are a few visits around 0 but still not the majority. Interestingly, 10/21 die within 5 years 
+
+Actually, after doing a bit of research (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4028741/#:~:text=COPD%20includes%20subjects%20positive%20by,1%2FFVC%20%3C%200.70%20only.&text=Odds%20ratio%20indicates%20odds%20of,severe%20quartile%20for%20each%20variable.)
+A fev1/fev6 < 0.73 is a reliable diagnosis for copd, and this is supported as the majority of cases here in both the true and false groups have fev1/fev6 below 0.8.
+
+
+Before cutting off anything, I wonder what has people have a fev1/fev6 above 0.75 if that is a good diagnosis for copd?
+
+```{r}
+preprocessed_data %>% 
+  filter(fev1_fev6 >0.75)
+```
+
+Nothing really sticks out.
+
+Let's examine
+
+In true:
+- fev1/fev6 >0.87
+
+In false:
+- fev1/fev6 <0.32
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month == "True" & fev1_fev6 > 0.87)
+```
+Nothing is really seen here that could still act as a predictor for despite having high fev1_fev6, that hosp_6_months is still likely - also they are somewhat diverse - removing
+
+```{r}
+preprocessed_data <- preprocessed_data[!(preprocessed_data$hosp_6_month == "True" & preprocessed_data$fev1_fev6 >0.87),]
+```
+
+```{r}
+preprocessed_data %>% 
+  filter(hosp_6_month == "False" & fev1_fev6 < 0.32)
+```
+A lot of them are ex-smokers
+A lot of them have high visit numbers
+A fair amount have or go on home_oxygen
+
+These all seem like good predictors for not having to go back to hospital, so probably worthy to leave in the dataset.
+
+Let's do a stat test (going to assume not normal)
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  fev1_fev6~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+```
+Despite being statistically significant, the difference in location is pretty small. I would assume that this is due to how the median being used here is positively skewed in the true group due to two peaks on both the lower and higher sides.
+
+#bmi
+Continuous -  student's t test
+
+Let's see how data is modelled
+
+
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = bmi, y=factor(hosp_6_month)))+geom_violin()+geom_boxplot()
+```
+Pretty equal, but still some outliers present in the False group
+
+Noticeably, the median in both groups is above the healthy range, this could suggest that bmi is not that worthy of a predictor - but a stat test could verify that. It's also interesting that having a higher bmi seems to protect you from readmission. This suggests to me that bmi could be a bit of an irrelevant variable
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False" & bmi > 44)
+```
+
+
+let's check assumptions
+
+```{r}
+model <- glm(data = preprocessed_data, hosp_6_month~bmi, family = binomial())
+
+par(mfrow=c(1,2))
+plot(model)
+par(mfrow=c(1,1))
+```
+
+Does not meet assumptions, therefore, let's do Mann-Whitney U test
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  bmi~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+
+```
+Stat. significant, would have to look to see how it would fit in the overall model next.
+
+# fev1_pred
+Not sure what this means, so will not be able to interpret it logically as good as some other variables
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = fev1_pred, y=factor(hosp_6_month)))+geom_violin()
+
+```
+
+So there are outliers in terms of the box plot range but, these are actually informative and biologically reasonable.
+Firstly, it is seen that having a higher fev1_pred is protective of being readmitted, so excluding these wouldn't be worth it as it is actually helpful.
+
+Is there a stat significant difference (will run student t test and wilcox test to see if there are any differences)
+```{r}
+t.test(data = preprocessed_data, fev1_pred~hosp_6_month)
+
+m1 <- wilcox.test(data = preprocessed_data,  fev1_pred~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+```
+Clearly statistically significant regardless, but still a small difference present, this makes me think that maybe this variable (and other variables that have such a small shift are potentially not worht including)
+
+#fev1_lln - have no clue what this is 
+```{r}
+ggplot(data = preprocessed_data, aes(x = fev1_lln, y=factor(hosp_6_month)))+geom_violin()
+
+```
+Looks pretty identically between groups, wonder what a t-test says
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  fev1_lln~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+```
+Still stat. significant, but such a small difference in location, not sure if it is even helpful to be put in the model. Especially considering that fev1_fev6 will be going in the model. There could be some unecessary overlap when trying to create a concise model.
+
+- Won't investigate further fev1 and fvc variables except for fvc_pred until clarified on what they mean
+
+#fvc_pred
+
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = fvc_pred, y = hosp_6_month))+geom_violin()
+m1 <- wilcox.test(data = preprocessed_data,  fvc_pred~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+```
+Again, small difference in location. Because of this, maybe not the best predicter in actual fvc will be going in the model.
+# unsure variables 
+fev1_pred - I think this is a man made variable, not something that had been recorded
+fev1_lln
+fev1_z
+fev1_pct_pred - This is a ratio but pct_pred seems to be man made, still not sure what it means 
+fvc_pred
+fvc_lln
+fvc_z
+fvc_pct_pred
+
+-- All of the above are mainly ratio variables, For sake of simplicity when making the model, it would be a good idea to either include just the variables in the ratio individually or use the select ratios that are better
+
+
+#mmrc
+finite amount so discrete -  will make a factor, can't really plot so will just do glm
+```{r}
+preprocessed_data$mmrc <- as.factor(preprocessed_data$mmrc)
+model <- glm(data = preprocessed_data, formula = hosp_6_month ~ mmrc, family=binomial())
+summary(model)
+```
+so statistically significant and supports the idea that lower mmrc represents worse self assessed copd
+
+#sp02
+
+This is a pretty narrow variable, and likely something that indicates short term health issues, I'd be interested to see how the distribution exists across the whole data set and then both groups
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = X, y=spo2))+geom_violin()
+
+```
+
+Are there actually individuals with spo2 below 75?
+
+```{r}
+preprocessed_data %>%
+  filter(spo2 <75) -> bad_spo2
+
+preprocessed_data %>%
+  filter(spo2 >=75) -> good_spo2
+```
+Most of these cases do not have 5 year mortality
+There is no way that there can be anomalies for this
+Actually, I noticed that time_diff seems to be pretty low, I wonder what the median time_diff is for the entire data set and then what it is for this
+
+```{r}
+summary(bad_spo2$time_diff, na.rm=TRUE)
+summary(good_spo2$time_diff, na.rm=TRUE)
+```
+So, the time diff is definitely lower on average for the people with bad_sp02 meaning that it is more common for them to have had earlier diagnoses. This means that these cases where sp02 was rediculously low means that it was probably the first time realising that they had had copd. Still worthy to include in the sample.
+
+
+Let's look at how these compare for both hosp groups
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = spo2, y=factor(hosp_6_month)))+geom_violin()
+
+```
+The sp02 diagram for the false group looks weird, it must be because of lots of NaN values in it.
+
+```{r}
+preprocessed_data %>%
+  filter(hosp_6_month == "False") -> false_hosp
+
+preprocessed_data %>%
+  filter(hosp_6_month == "True") -> true_hosp
+
+nan_count_false <- false_hosp %>%
+  summarize(count_nan = sum(is.na(spo2)))
+nan_count_false
+
+nan_count_true <- true_hosp %>%
+  summarize(count_nan = sum(is.na(spo2)))
+nan_count_true
+```
+So, the nan values is causing that shape, I wonder if there is a stat. sign. dif.?
+```{r}
+t.test(data = preprocessed_data, spo2~hosp_6_month)
+
+```
+Again, such a small difference even though it is stat. significant, because of this, it won't go in the model
+
+
+#hosp_past_year
+
+Categorical, let's do chi-sq-test
+
+```{r}
+table(preprocessed_data$hosp_past_year,preprocessed_data$hosp_6_month)
+chisq.test(preprocessed_data$hosp_past_year, preprocessed_data$hosp_6_month, correct = FALSE)
+```
+So, statistically significant
+
+#hosp_past_year_count
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = hosp_past_year_count, y=factor(hosp_6_month)))+geom_violin()
+
+```
+Seems that those who go onto to be hospitalised in 6 months are more likely to have been hospitalised in the previous year
+
+stat test
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  hosp_past_year_count~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+
+t.test(data = preprocessed_data, hosp_past_year_count~hosp_6_month)
+```
+Both tests show a really small difference in location, potentially not worth including
+
+#hosp_cum_count
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = hosp_cum_count, y=factor(hosp_6_month)))+geom_violin()
+
+```
+Much like above, spread is a bit wider in the true group
+
+stat sig?
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  hosp_cum_count~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+
+t.test(data = preprocessed_data, hosp_cum_count~hosp_6_month)
+```
+stat significant and it has a bit of a greater difference in location too - will have to pick the hosp variable with the greatest difference in location
+
+#fev1_pp_delta
+
+```{r}
+ggplot(data = preprocessed_data, aes(x = fev1_pp_delta, y=factor(hosp_6_month)))+geom_violin()
+
+```
+Pretty identical, I don't know if I'll include this one
+
+stat test
+
+```{r}
+m1 <- wilcox.test(data = preprocessed_data,  fev1_pp_delta~hosp_6_month, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+print(m1)
+
+t.test(data = preprocessed_data, fev1_pp_delta~hosp_6_month)
+```
+students t test shows a big difference while wilcoxon shows a pretty small difference, might have to use the wilcoxon
+
+--------
+
+So, have gone through all of the relevant variables (except for some of the fev1 and fvc variables that am not sure what they mean) and am up to building a model.
+
+Will make sure to include:
+- statistically significant variables
+- variables that show a fairly decent difference between groups
+- variables that are not related to another, just pick one of one type.
+
+
+
+#Model Attempt 2
+
+```{r}
+model0 <-glm(data = preprocessed_data, formula = hosp_6_month~has_ct+has_hosp+home_oxygen_ever+sex+smoking_status+age+fev1_fvc+fivc+pef+mmrc+hosp_past_year+hosp_cum_count, family = binomial())
+summary(model0)
+
+
+library(pROC)
+
+predicted_probs <- predict(model0, newdata = preprocessed_data, type = "response")
+
+# Create a ROC curve object
+roc_data <- roc(preprocessed_data$hosp_6_month, predicted_probs)
+
+# Plot the ROC curve
+plot(roc_data)
+
+# Calculate the AUC
+auc_value <- auc(roc_data)
+print(auc_value)
+
+library(caret)
+
+threshold=0.5
+predicted_values<-ifelse(predict(model0,type="response")>threshold,1,0)
+actual_values<-model0$y
+conf_matrix<-table(predicted_values,actual_values)
+conf_matrix # Because there are nan values in some of these entries, they do not all show up in the confusion matrix
+sensitivity(conf_matrix)
+specificity(conf_matrix)
+
+
+#rows_with_nan <- which(rowSums(is.na(preprocessed_data[, c("has_ct", "has_hosp", "home_oxygen_ever", "sex", "smoking_status", "age", "fev1_fvc", "fivc", "pef", "mmrc", "hosp_past_year", "hosp_cum_count")])) > 0)
+
+
+```
+
+There are quite a few variables with actually high p-values in the scheme of the model, for this reason they should be removed.
+Moreover, the AUC is quite high, but there are a lot of variables, would like to see how things change when these variables change.
+Another concern/consideration is how high the sensitivity, sure because this is a health related model you'd want it this way, but still, such a low specificity means that this is a really inefficient model. I'm not sure how to interpret that
+```{r}
+model1 <- glm(data = preprocessed_data, formula = hosp_6_month~has_ct+has_hosp+ home_oxygen_ever+sex+smoking_status+mmrc+hosp_past_year+hosp_cum_count, family=binomial())
+
+summary(model1)
+
+
+
+
+```
+
+
+#Model Attempt 3
+```{r}
+library(pROC)
+
+predicted_probs <- predict(model1, newdata = preprocessed_data, type = "response")
+
+# Create a ROC curve object
+roc_data <- roc(preprocessed_data$hosp_6_month, predicted_probs)
+
+# Plot the ROC curve
+plot(roc_data)
+
+# Calculate the AUC
+auc_value <- auc(roc_data)
+print(auc_value)
+
+library(caret)
+
+threshold=0.5
+predicted_values<-ifelse(predict(model1,type="response")>threshold,1,0)
+actual_values<-model1$y
+conf_matrix<-table(predicted_values,actual_values)
+conf_matrix # Because there are nan values in some of these entries, they do not all show up in the confusion matrix
+sensitivity(conf_matrix)
+specificity(conf_matrix)
+
+
+#rows_with_nan <- which(rowSums(is.na(preprocessed_data[, c("has_ct", "has_hosp", "home_oxygen_ever", "sex", "smoking_status", "age", "fev1_fvc", "fivc", "pef", "mmrc", "hosp_past_year", "hosp_cum_count")])) > 0)
+
+```
+Interesting, despite removing all of those variables, the AUC has only decreased slightly, but still the sensitivity is really high. This suggests to me that the AUC is a fluke
+
